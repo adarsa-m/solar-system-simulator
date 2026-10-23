@@ -1,0 +1,1497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Solar System Simulation & Space Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: #03030a;
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            user-select: none;
+        }
+
+        /* --- Loading Screen --- */
+        #loading-screen {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: #03030a; z-index: 1000;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            transition: opacity 0.8s ease;
+        }
+        .spinner {
+            width: 60px; height: 60px;
+            border: 4px solid rgba(77, 166, 255, 0.2);
+            border-top: 4px solid #4da6ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #loading-screen h1 { font-size: 24px; color: #4da6ff; letter-spacing: 2px; margin-bottom: 8px; }
+        #loading-screen p { color: #8888aa; font-size: 13px; }
+
+        /* --- Universe --- */
+        #universe-wrapper {
+            position: relative;
+            flex-grow: 1;
+            min-width: 0;
+            height: 100vh;
+            overflow: hidden;
+            background: radial-gradient(circle at center, #0f0f2d 0%, #03030a 100%);
+            cursor: grab;
+        }
+        #universe-wrapper:active { cursor: grabbing; }
+
+        /* The universe layer is just a viewport-sized overlay. Every object is placed
+           in screen space by JS (position computed in double precision). */
+        #universe {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        #trailCanvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .sun {
+            position: absolute;
+            top: 0; left: 0;
+            background: radial-gradient(circle, #ffeb3b 0%, #ff9800 50%, #f44336 100%);
+            border-radius: 50%;
+            box-shadow: 0 0 60px #ff9800, 0 0 120px #f44336;
+            cursor: pointer;
+            pointer-events: auto;
+            z-index: 10;
+            transform-origin: 0 0;
+        }
+        .sun:hover { filter: brightness(1.2); }
+
+        .body-container {
+            position: absolute;
+            top: 0; left: 0;
+            pointer-events: none;
+            z-index: 5;
+            transform-origin: 0 0;
+        }
+
+        .celestial-body {
+            position: absolute;
+            border-radius: 50%;
+            cursor: pointer;
+            pointer-events: auto;
+            transform: translate(-50%, -50%);
+            transition: box-shadow 0.2s;
+        }
+        .celestial-body:hover { box-shadow: 0 0 15px #ffffff; }
+
+        /* --inv = 1/zoom, set from JS, keeps the selection ring a constant size on screen */
+        .celestial-body.highlighted::after {
+            content: '';
+            position: absolute; top: 50%; left: 50%;
+            width: calc(32px * var(--inv, 1));
+            height: calc(32px * var(--inv, 1));
+            border: calc(2px * var(--inv, 1)) solid #4da6ff;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            animation: pulseRing 1.5s infinite;
+            pointer-events: none;
+        }
+        @keyframes pulseRing {
+            0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(2.5); opacity: 0; }
+        }
+
+        .saturn-rings {
+            position: absolute; top: 50%; left: 50%;
+            border: 4px solid rgba(210, 180, 140, 0.85);
+            border-radius: 50%;
+            transform: translate(-50%, -50%) rotate(25deg);
+            pointer-events: none;
+            box-sizing: border-box;
+            box-shadow: 0 0 10px rgba(210, 180, 140, 0.5);
+        }
+        .neptune-rings {
+            position: absolute; top: 50%; left: 50%;
+            border: 2px solid rgba(100, 150, 255, 0.45);
+            border-radius: 50%;
+            transform: translate(-50%, -50%) rotate(15deg);
+            pointer-events: none;
+            box-sizing: border-box;
+        }
+
+        .moon-container { position: absolute; top: 0; left: 0; pointer-events: none; }
+        .moon {
+            position: absolute;
+            background-color: #cccccc;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .moon-label {
+            position: absolute;
+            left: calc(100% + 4px);
+            top: 50%;
+            transform: translateY(-50%);
+            color: rgba(245, 248, 255, 0.96);
+            font: 11px/1.1 'Segoe UI', sans-serif;
+            white-space: nowrap;
+            text-shadow: 0 1px 3px #000, 0 0 5px #000;
+            pointer-events: none;
+            display: none;
+        }
+        #infoDesc { white-space: pre-line; }
+
+        /* --- Controls --- */
+        #controls {
+            position: absolute; top: 20px; left: 20px; z-index: 100;
+            display: flex; flex-wrap: wrap; gap: 8px; max-width: 760px; align-items: center;
+            background: rgba(12, 12, 30, 0.85);
+            padding: 10px 14px;
+            border-radius: 10px;
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255,255,255,0.12);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        button, select, input[type="range"] {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background 0.2s, border-color 0.2s;
+        }
+        button:hover, select:hover { background: rgba(255, 255, 255, 0.18); border-color: #4da6ff; }
+        select option { background: #0f0f2d; color: white; }
+
+        .date-display { font-size: 12px; color: #4da6ff; min-width: 82px; text-align: center; font-weight: bold; }
+
+        /* --- Sidebar --- */
+        #sidebar {
+            width: 380px;
+            flex-shrink: 0;
+            background: rgba(12, 12, 30, 0.96);
+            border-left: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            z-index: 100;
+            box-shadow: -10px 0 30px rgba(0,0,0,0.7);
+            overflow-y: auto;
+            transition: transform 0.3s ease, margin-right 0.3s ease;
+        }
+        #sidebar.collapsed { transform: translateX(100%); margin-right: -380px; }
+
+        .sidebar-header {
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 12px; margin-bottom: 14px;
+        }
+        #sidebar h2 { font-size: 22px; color: #4da6ff; letter-spacing: 0.5px; }
+        .collapse-btn { background: none; border: none; color: #aaa; font-size: 18px; cursor: pointer; padding: 4px 8px; }
+        .collapse-btn:hover { color: white; }
+
+        #sidebar p { font-size: 13px; line-height: 1.6; margin-bottom: 10px; color: #cccccc; }
+        .label { font-weight: bold; color: #ffffff; }
+
+        .stat-badge {
+            background: rgba(77, 166, 255, 0.15);
+            border: 1px solid rgba(77, 166, 255, 0.3);
+            padding: 4px 10px; border-radius: 4px;
+            font-size: 12px; color: #4da6ff;
+            display: inline-block; margin-bottom: 10px; font-weight: 600;
+        }
+
+        .directory-container {
+            margin-top: 15px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding-top: 14px;
+            flex-grow: 1;
+            display: flex; flex-direction: column;
+        }
+        #searchInput {
+            width: 100%; padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white; border-radius: 6px; font-size: 13px;
+            margin-bottom: 10px; outline: none;
+            transition: border-color 0.2s;
+            user-select: text;
+        }
+        #searchInput:focus { border-color: #4da6ff; background: rgba(255, 255, 255, 0.1); }
+
+        .celestial-grid {
+            display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+            overflow-y: auto; max-height: 240px; padding-right: 4px;
+        }
+        .celestial-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: white; padding: 8px 10px; border-radius: 6px;
+            cursor: pointer; text-align: left; font-size: 12px;
+            transition: background 0.2s, border-color 0.2s;
+        }
+        .celestial-btn:hover { background: rgba(77, 166, 255, 0.2); border-color: #4da6ff; }
+
+        .instruction { color: #8888aa; font-style: italic; margin-top: 15px; font-size: 11px; text-align: center; line-height: 1.5; }
+
+        #toggleSidebarTab {
+            position: absolute; top: 20px; right: 20px; z-index: 101;
+            background: rgba(12, 12, 30, 0.9);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: white; padding: 8px 14px; border-radius: 6px;
+            cursor: pointer; display: none;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+        }
+
+        @media (max-width: 900px) {
+            #sidebar { position: absolute; right: 0; top: 0; height: 100vh; z-index: 200; margin-right: 0; }
+            #sidebar.collapsed { margin-right: 0; }
+            #toggleSidebarTab { display: block; }
+        }
+
+        #didYouKnow {
+            margin-top: 12px; margin-bottom: 12px; padding: 14px;
+            background: rgba(77, 166, 255, 0.08);
+            border: 1px solid rgba(77, 166, 255, 0.3);
+            border-radius: 8px;
+        }
+        #didYouKnow h3 { color: #4da6ff; font-size: 15px; margin-bottom: 8px; }
+        #spaceFact { color: #dddded; font-size: 12px; line-height: 1.6; min-height: 55px; margin-bottom: 10px; }
+        #nextFactBtn {
+            background: rgba(77, 166, 255, 0.15);
+            border: 1px solid rgba(77, 166, 255, 0.4);
+            color: #4da6ff; padding: 6px 10px; border-radius: 5px; cursor: pointer;
+        }
+        .visualization-note {
+            margin-top: 15px; padding: 12px;
+            background: rgba(255, 193, 7, 0.08);
+            border: 1px solid rgba(255, 193, 7, 0.3);
+            border-radius: 8px; color: #e6d9ad; font-size: 12px; line-height: 1.6;
+        }
+
+        /* --- Responsive / touch-friendly layout --- */
+        html, body { width: 100%; height: 100%; height: 100dvh; }
+        button, select, input { touch-action: manipulation; }
+        button { min-height: 36px; }
+        @media (max-width: 700px) {
+            body { height: 100dvh; min-height: 100dvh; overflow: hidden; }
+            #universe-wrapper { width: 100%; height: 100dvh; min-height: 0; touch-action: none; }
+            #controls {
+                top: max(8px, env(safe-area-inset-top)); left: 8px; right: 8px;
+                max-width: none; width: auto; flex-wrap: nowrap; overflow-x: auto;
+                gap: 6px; padding: 7px; border-radius: 10px;
+                -webkit-overflow-scrolling: touch; scrollbar-width: none;
+            }
+            #controls::-webkit-scrollbar { display: none; }
+            #controls button, #controls .date-display {
+                flex: 0 0 auto; white-space: nowrap; font-size: 12px;
+                min-height: 40px; padding: 8px 10px;
+            }
+            #sidebar {
+                position: fixed; left: 0; right: 0; top: auto; bottom: 0;
+                width: 100%; height: min(68dvh, 620px); max-height: 82dvh;
+                padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+                border-left: 0; border-top: 1px solid rgba(255,255,255,.18);
+                border-radius: 18px 18px 0 0; z-index: 200;
+                overflow-y: auto; -webkit-overflow-scrolling: touch;
+                box-shadow: 0 -12px 35px rgba(0,0,0,.65);
+            }
+            #sidebar.collapsed { transform: translateY(105%); margin-right: 0; }
+            #sidebar h2 { font-size: 20px; }
+            #sidebar p { font-size: 13px; }
+            .celestial-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 180px; }
+            .celestial-btn { min-height: 42px; font-size: 13px; }
+            #toggleSidebarTab {
+                display: block; top: auto; right: 10px; bottom: max(10px, env(safe-area-inset-bottom));
+                padding: 11px 16px; min-height: 44px; z-index: 150;
+            }
+            #didYouKnow { padding: 11px; }
+            #spaceFact { min-height: 0; }
+            .instruction { font-size: 12px; }
+        }
+        @media (max-width: 380px) {
+            #controls { left: 5px; right: 5px; padding: 5px; }
+            #controls button, #controls .date-display { font-size: 11px; padding: 7px 8px; }
+            #sidebar { padding-left: 12px; padding-right: 12px; }
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="loading-screen">
+        <div class="spinner"></div>
+        <h1>SOLAR SYSTEM SIMULATOR</h1>
+        <p>Loading Keplerian Orbit Calculations & Celestial Database...</p>
+    </div>
+
+    <div id="universe-wrapper">
+        <canvas id="trailCanvas"></canvas>
+        <div id="universe">
+            <div class="sun" id="sun" onclick="selectBody('sun'); followBody('sun');" style="width:50px; height:50px;"></div>
+        </div>
+    </div>
+
+    <button id="toggleSidebarTab" onclick="toggleSidebar()">Dashboard</button>
+
+    <div id="controls">
+        <button id="pauseBtn">Pause</button>
+        <button id="todayBtn" title="Jump back to today's real planet positions">Today</button>
+        <span class="date-display" id="dateLabel">--</span>
+        <button id="centerBtn">Center Sun</button>
+        <button id="scaleToggleBtn">Size: Visual Scale</button>
+        <button id="viewBtn" title="Switch between a flat top-down view and a tilted 3D view (right-drag or Shift+drag to rotate freely)">View: Top-down</button>
+        <button id="orbitToggleBtn" style="border-color: #4da6ff;">Orbits: On</button>
+        <button id="followBtn">Follow: Sun</button>
+    </div>
+
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h2 id="infoTitle">The Sun</h2>
+            <button class="collapse-btn" onclick="toggleSidebar()">✕</button>
+        </div>
+        <div id="infoBadge" class="stat-badge">Central Star</div>
+        <p id="infoDesc">The G-type main-sequence star at the center of our solar system, holding 99.8% of its mass and powering all planetary orbits.</p>
+        <p><span class="label">Distance from Sun:</span> <span id="infoDist">0 km (0.0 AU)</span></p>
+        <p><span class="label">Right now:</span> <span id="infoNow">—</span></p>
+        <p><span class="label">Diameter:</span> <span id="infoSize">1,392,700 km (109x Earth)</span></p>
+        <p><span class="label">Orbital Period:</span> <span id="infoPeriod">N/A (Solar Rotation: ~27 Days)</span></p>
+        <p><span class="label">Major Moons:</span> <span id="infoMoons">N/A (Central Star)</span></p>
+        <p><span class="label">Belt Location:</span> <span id="infoBelt">Center of System</span></p>
+
+        <div id="didYouKnow">
+            <h3>💡 Did You Know?</h3>
+            <p id="spaceFact">A day on Venus is longer than its year!</p>
+            <button id="nextFactBtn">Next Fact ↻</button>
+        </div>
+
+        <div class="directory-container">
+            <div class="label" style="margin-bottom:8px;">Celestial Search & Directory</div>
+            <input type="text" id="searchInput" placeholder="Search planet, dwarf, or sun..." onkeyup="filterDirectory()">
+            <div class="celestial-grid" id="celestialGrid"></div>
+        </div>
+        <div class="instruction">Scroll to zoom · drag to pan<br>Right-drag or Shift+drag to rotate the view</div>
+
+        <div class="visualization-note">
+            <strong id="scaleNoteTitle">⚠ Visualization — Not to Scale</strong>
+            <p id="scaleNoteBody"></p>
+        </div>
+    </div>
+
+    <script>
+        const universe = document.getElementById('universe');
+        const wrapper = document.getElementById('universe-wrapper');
+        const trailCanvas = document.getElementById('trailCanvas');
+        const ctx = trailCanvas.getContext('2d');
+        const sunEl = document.getElementById('sun');
+
+        // ---------- Scales ----------
+        // Two scales (scaleBlend: 0 = Visual, 1 = True Physical):
+        //   Visual: the original look. 1 AU = 100 px, planets exaggerated, big rings and moons.
+        //   True:   Earth = 4.6 px (12,742 km), so 1 AU = 149,597,870.7 / 12,742 * 4.6 ≈ 54,006 px.
+        //           Orbits, planets, moons, belts and the Sun all share ONE scale.
+        // Objects are positioned in screen space (not inside a giant CSS layer), so both stay smooth.
+        const EARTH_PX = 4.6;
+        const EARTH_KM = 12742;
+        const VISUAL_AU_PX = 100;
+        const TRUE_AU_PX = (149597870.7 / EARTH_KM) * EARTH_PX;
+        const SUN_TRUE_PX = (1392700 / EARTH_KM) * EARTH_PX;
+        const SUN_VISUAL_PX = 50;
+        const kmToPx = km => (km / EARTH_KM) * EARTH_PX;
+
+        let scaleBlend = 0; // 0 = Visual Scale, 1 = True Physical
+        const lerpLog = (v, tv) => Math.exp(Math.log(v) * (1 - scaleBlend) + Math.log(tv) * scaleBlend);
+        const lerp = (v, tv) => v * (1 - scaleBlend) + tv * scaleBlend;
+        const sunSize = () => lerpLog(SUN_VISUAL_PX, SUN_TRUE_PX);
+        const bodySize = b => lerpLog(b.visualSize, b.trueSize);
+        const moonDist = m => lerpLog(m.distance, m.trueDistance);
+        const moonSize = m => lerpLog(m.visualSize, m.trueSize);
+        // Moon names stay hidden until their parent planet is at least this many screen pixels wide.
+        const MOON_LABEL_PLANET_PX = 70;
+
+        let isPaused = false;
+        const DAYS_PER_SECOND = 5;
+        let showOrbits = true;
+        let showTrails = true;
+        let followedBodyId = 'sun';
+        let selectedBodyId = 'sun';
+
+        function auPx() { return lerpLog(VISUAL_AU_PX, TRUE_AU_PX); }
+        function zoomBounds() {
+            // 4 px/AU (whole system in view) at the far end, up to very close-up
+            return [4 / auPx(), lerpLog(10, 150)];
+        }
+        function clampZoom(z) {
+            const [lo, hi] = zoomBounds();
+            return Math.min(Math.max(z, lo), hi);
+        }
+
+        // Camera focus is a 3D point in AU (Sun at the origin). zoom multiplies scale-pixels -> screen pixels.
+        let camera = { x: 0, y: 0, z: 0, zoom: 0.55 };
+        // View orientation: az = rotation about the ecliptic pole, tilt = 0 (top-down) .. ~90° (edge-on)
+        const view = { az: 0, tilt: 0, tiltTarget: 0 };
+        const TILTED_VIEW = 1.0; // radians (~57°)
+
+        let isDragging = false;
+        let dragMode = 'pan';
+        let dragMoved = 0;
+        let startDragX = 0, startDragY = 0;
+
+        let lastTime = performance.now();
+
+        // ---------- Time: days since J2000.0 (JD 2451545.0). Starts at today's real date ----------
+        const J2000 = 2451545.0;
+        const DEG = Math.PI / 180;
+        const TWO_PI = 2 * Math.PI;
+        const dateToSimDays = d => d.getTime() / 86400000 + 2440587.5 - J2000;
+        const simDaysToDate = t => new Date((t + J2000 - 2440587.5) * 86400000);
+        let globalSimulationTime = dateToSimDays(new Date());
+
+        // ---------- Orbital elements ----------
+        // Planets: NASA/JPL "Keplerian Elements for Approximate Positions of the Major Planets"
+        //   (Table 1, valid 1800-2050, ecliptic & equinox of J2000). Each value is [value at epoch, rate per century]:
+        //   a (AU), e, I (deg), L = mean longitude (deg), w = longitude of perihelion (deg), O = longitude of ascending node (deg).
+        //   "Earth" is the Earth-Moon barycenter, as in the JPL table. Pluto uses the older JPL table values.
+        // Ceres & Eris: JPL Small-Body Database osculating elements (epoch JD 2461200.5), rates from mean motion.
+        const bodies = [
+            {
+                id: 'mercury', name: 'Mercury', type: 'Planet',
+                el: { a: [0.38709927, 0.00000037], e: [0.20563593, 0.00001906], I: [7.00497902, -0.00594749], L: [252.25032350, 149472.67411175], w: [77.45779628, 0.16047689], O: [48.33076593, -0.12534081] },
+                visualSize: 8, trueSize: kmToPx(4879), color: '#aaaaaa',
+                distText: '57.9 million km (0.39 AU)', sizeText: '4,879 km (0.38x Earth)', periodText: '88 Earth Days (0.24 Years)', moonsText: '0 Moons', beltText: 'Inner Solar System', badgeText: 'Terrestrial Planet',
+                desc: 'Mercury is the smallest planet in our solar system and closest to the Sun, featuring extreme temperature swings and a highly eccentric elliptical orbit.'
+            },
+            {
+                id: 'venus', name: 'Venus', type: 'Planet',
+                el: { a: [0.72333566, 0.00000390], e: [0.00677672, -0.00004107], I: [3.39467605, -0.00078890], L: [181.97909950, 58517.81538729], w: [131.60246718, 0.00268329], O: [76.67984255, -0.27769418] },
+                visualSize: 12, trueSize: kmToPx(12104), color: '#e3bb76',
+                distText: '108.2 million km (0.72 AU)', sizeText: '12,104 km (0.95x Earth)', periodText: '225 Earth Days (0.62 Years)', moonsText: '0 Moons', beltText: 'Inner Solar System', badgeText: 'Terrestrial Planet',
+                desc: 'Venus features a thick, toxic carbon dioxide atmosphere that traps heat in a runaway greenhouse effect, making it the hottest planet.'
+            },
+            {
+                id: 'earth', name: 'Earth', type: 'Planet',
+                el: { a: [1.00000261, 0.00000562], e: [0.01671123, -0.00004392], I: [-0.00001531, -0.01294668], L: [100.46457166, 35999.37244981], w: [102.93768193, 0.32327364], O: [0.0, 0.0] },
+                visualSize: 14, trueSize: EARTH_PX, color: '#2277ff',
+                distText: '149.6 million km (1.00 AU)', sizeText: '12,742 km (1.00x Earth Reference)', periodText: '365.25 Earth Days (1.00 Year)', moonsText: '1 Major Moon (The Moon)', beltText: 'Inner Solar System', badgeText: 'Terrestrial Planet',
+                desc: 'Our home planet is the only celestial body known to harbor life, with liquid surface water and a protective nitrogen-oxygen atmosphere. James Webb Space Telescope (JWST) is shown near Earth at Sun–Earth L2, about 1.5 million km away on the anti-Sun side; its display marker is enlarged for visibility.',
+                moons: [
+                    { name: 'The Moon', distance: 22, visualSize: 3.5, trueDistance: kmToPx(384400), trueSize: kmToPx(3474), period: 27.3, color: '#cccccc' }
+                ]
+            },
+            {
+                id: 'mars', name: 'Mars', type: 'Planet',
+                el: { a: [1.52371034, 0.00001847], e: [0.09339410, 0.00007882], I: [1.84969142, -0.00813131], L: [-4.55343205, 19140.30268499], w: [-23.94362959, 0.44441088], O: [49.55953891, -0.29257343] },
+                visualSize: 10, trueSize: kmToPx(6779), color: '#cc4400',
+                distText: '227.9 million km (1.52 AU)', sizeText: '6,779 km (0.53x Earth)', periodText: '687 Earth Days (1.88 Years)', moonsText: '2 Moons (Phobos, Deimos)', beltText: 'Inner Solar System', badgeText: 'Terrestrial Planet',
+                desc: 'Mars is a dusty, cold desert world with a thin atmosphere, featuring the largest volcano and canyon system in the solar system.',
+                moons: [
+                    { name: 'Phobos', distance: 16, visualSize: 1.5, trueDistance: kmToPx(9376), trueSize: kmToPx(22), period: 0.3, color: '#888' },
+                    { name: 'Deimos', distance: 22, visualSize: 1.0, trueDistance: kmToPx(23463), trueSize: kmToPx(12), period: 1.3, color: '#999' }
+                ]
+            },
+            {
+                id: 'ceres', name: 'Ceres', type: 'Dwarf Planet',
+                el: { epoch: 2461200.5, a: [2.77, 0], e: [0.0797, 0], I: [10.6, 0], L: [67.5, 7827.4], w: [153.5, 0], O: [80.2, 0] },
+                visualSize: 6, trueSize: kmToPx(940), color: '#888888',
+                distText: '414 million km (2.77 AU)', sizeText: '940 km (0.07x Earth)', periodText: '1,680 Earth Days (4.60 Years)', moonsText: '0 Moons', beltText: 'Asteroid Belt (Between Mars & Jupiter)', badgeText: 'Dwarf Planet',
+                desc: 'Ceres is the largest object in the inner Asteroid Belt and contains vast amounts of water ice beneath its rocky crust.'
+            },
+            {
+                id: 'jupiter', name: 'Jupiter', type: 'Planet',
+                el: { a: [5.20288700, -0.00011607], e: [0.04838624, -0.00013253], I: [1.30439695, -0.00183714], L: [34.39644051, 3034.74612775], w: [14.72847983, 0.21252668], O: [100.47390909, 0.20469106] },
+                visualSize: 28, trueSize: kmToPx(139820), color: '#d4a373',
+                distText: '778.5 million km (5.20 AU)', sizeText: '139,820 km (11.0x Earth)', periodText: '4,333 Earth Days (11.86 Years)', moonsText: '95 Moons (Notable: Io, Europa, Ganymede)', beltText: 'Outer Solar System', badgeText: 'Gas Giant',
+                desc: 'By far the largest planet in our solar system, more than twice as massive as all other planets combined, featuring the Great Red Spot storm.',
+                moons: [
+                    { name: 'Io', distance: 36, visualSize: 2.5, trueDistance: kmToPx(421700), trueSize: kmToPx(3643), period: 1.8, color: '#ffcc00' },
+                    { name: 'Europa', distance: 44, visualSize: 2.0, trueDistance: kmToPx(671100), trueSize: kmToPx(3122), period: 3.5, color: '#e0e0e0' },
+                    { name: 'Ganymede', distance: 54, visualSize: 3.5, trueDistance: kmToPx(1070400), trueSize: kmToPx(5268), period: 7.1, color: '#b0b0b0' },
+                    { name: 'Callisto', distance: 66, visualSize: 3.0, trueDistance: kmToPx(1882700), trueSize: kmToPx(4821), period: 16.7, color: '#8f8b83' },
+                    { name: 'Amalthea', distance: 20, visualSize: 1.0, trueDistance: kmToPx(181), trueSize: kmToPx(167), period: 0.5, color: '#a66f50' }
+                ]
+            },
+            {
+                id: 'saturn', name: 'Saturn', type: 'Planet',
+                el: { a: [9.53667594, -0.00125060], e: [0.05386179, -0.00050991], I: [2.48599187, 0.00193609], L: [49.95424423, 1222.49362201], w: [92.59887831, -0.41897216], O: [113.66242448, -0.28867794] },
+                visualSize: 24, trueSize: kmToPx(116460), color: '#f4e2bb',
+                distText: '1.43 billion km (9.58 AU)', sizeText: '116,460 km (9.1x Earth)', periodText: '10,759 Earth Days (29.45 Years)', moonsText: '146 Moons (Notable: Titan)', beltText: 'Outer Solar System', badgeText: 'Gas Giant',
+                hasRings: true, ringType: 'saturn-rings',
+                desc: 'Adorned with a dazzling, complex ring system made mostly of ice particles, Saturn is famous for its moon Titan which has a dense atmosphere.',
+                moons: [
+                    { name: 'Mimas', distance: 20, visualSize: 1.0, trueDistance: kmToPx(185539), trueSize: kmToPx(396), period: 0.9, color: '#b9b8b2' },
+                    { name: 'Enceladus', distance: 25, visualSize: 1.2, trueDistance: kmToPx(237948), trueSize: kmToPx(504), period: 1.4, color: '#f0f0e9' },
+                    { name: 'Tethys', distance: 30, visualSize: 1.4, trueDistance: kmToPx(294619), trueSize: kmToPx(1062), period: 1.9, color: '#d9d8d0' },
+                    { name: 'Dione', distance: 35, visualSize: 1.5, trueDistance: kmToPx(377396), trueSize: kmToPx(1123), period: 2.7, color: '#c7c7c2' },
+                    { name: 'Rhea', distance: 40, visualSize: 1.7, trueDistance: kmToPx(527108), trueSize: kmToPx(1528), period: 4.5, color: '#d8d5ce' },
+                    { name: 'Titan', distance: 48, visualSize: 3.0, trueDistance: kmToPx(1221870), trueSize: kmToPx(5150), period: 15.9, color: '#e6c687' },
+                    { name: 'Iapetus', distance: 60, visualSize: 1.6, trueDistance: kmToPx(3560850), trueSize: kmToPx(1469), period: 79.3, color: '#a7a49d' }
+                ]
+            },
+            {
+                id: 'uranus', name: 'Uranus', type: 'Planet',
+                el: { a: [19.18916464, -0.00196176], e: [0.04725744, -0.00004397], I: [0.77263783, -0.00242939], L: [313.23810451, 428.48202785], w: [170.95427630, 0.40805281], O: [74.01692503, 0.04240589] },
+                visualSize: 18, trueSize: kmToPx(50724), color: '#77ddff',
+                distText: '2.87 billion km (19.2 AU)', sizeText: '50,724 km (4.0x Earth)', periodText: '30,687 Earth Days (84.0 Years)', moonsText: '5 Major Named Moons', beltText: 'Outer Solar System', badgeText: 'Ice Giant',
+                desc: 'Uranus rotates at a nearly 90-degree angle from the plane of its orbit, giving it extreme 21-year-long seasons.',
+                moons: [
+                    { name: 'Miranda', distance: 22, visualSize: 1.1, trueDistance: kmToPx(129900), trueSize: kmToPx(472), period: 1.4, color: '#b6b5b1' },
+                    { name: 'Ariel', distance: 28, visualSize: 1.5, trueDistance: kmToPx(190900), trueSize: kmToPx(1158), period: 2.5, color: '#d4d2cc' },
+                    { name: 'Umbriel', distance: 34, visualSize: 1.5, trueDistance: kmToPx(266000), trueSize: kmToPx(1169), period: 4.1, color: '#777875' },
+                    { name: 'Titania', distance: 42, visualSize: 2.0, trueDistance: kmToPx(435900), trueSize: kmToPx(1578), period: 8.7, color: '#c5c3bc' },
+                    { name: 'Oberon', distance: 50, visualSize: 1.9, trueDistance: kmToPx(583500), trueSize: kmToPx(1523), period: 13.5, color: '#a7a69f' }
+                ]
+            },
+            {
+                id: 'neptune', name: 'Neptune', type: 'Planet',
+                el: { a: [30.06992276, 0.00026291], e: [0.00859048, 0.00005105], I: [1.77004347, 0.00035372], L: [-55.12002969, 218.45945325], w: [44.96476227, -0.32241464], O: [131.78422574, -0.00508664] },
+                visualSize: 18, trueSize: kmToPx(49244), color: '#3333cc',
+                distText: '4.50 billion km (30.0 AU)', sizeText: '49,244 km (3.9x Earth)', periodText: '60,190 Earth Days (164.8 Years)', moonsText: '16 Moons (Notable: Triton)', beltText: 'Outer Solar System', badgeText: 'Ice Giant',
+                hasRings: true, ringType: 'neptune-rings',
+                desc: 'Dark, cold, and whipped by supersonic winds, ice giant Neptune features dynamic storm systems and retrograde moon Triton.',
+                moons: [
+                    { name: 'Proteus', distance: 22, visualSize: 1.2, trueDistance: kmToPx(117647), trueSize: kmToPx(420), period: 1.1, color: '#777f8a' },
+                    { name: 'Triton', distance: 30, visualSize: 2.2, trueDistance: kmToPx(354759), trueSize: kmToPx(2707), period: 5.9, color: '#a0c4ff' },
+                    { name: 'Nereid', distance: 45, visualSize: 1.0, trueDistance: kmToPx(5513400), trueSize: kmToPx(340), period: 360.1, color: '#9aa6b4' }
+                ]
+            },
+            {
+                id: 'pluto', name: 'Pluto', type: 'Dwarf Planet',
+                el: { a: [39.48211675, -0.00031596], e: [0.24882730, 0.00005170], I: [17.14001206, 0.00004818], L: [238.92903833, 145.20780515], w: [224.06891629, -0.04062942], O: [110.30393684, -0.01183482] },
+                visualSize: 8, trueSize: kmToPx(2376), color: '#c2b280',
+                distText: '5.91 billion km (39.5 AU)', sizeText: '2,376 km (0.19x Earth)', periodText: '90,560 Earth Days (248.0 Years)', moonsText: '5 Moons (Notable: Charon)', beltText: 'Kuiper Belt (Beyond Neptune)', badgeText: 'Dwarf Planet',
+                desc: 'Pluto has a highly eccentric and inclined orbit taking it deep into the icy Kuiper Belt, accompanied by its massive binary moon Charon.'
+            },
+            {
+                id: 'eris', name: 'Eris', type: 'Dwarf Planet',
+                el: { epoch: 2461200.5, a: [67.9, 0], e: [0.438, 0], I: [43.9, 0], L: [39.0, 64.1], w: [187.0, 0], O: [36.0, 0] },
+                visualSize: 8, trueSize: kmToPx(2326), color: '#e5e4e2',
+                distText: '10.2 billion km (67.9 AU)', sizeText: '2,326 km (0.18x Earth)', periodText: '205,000 Earth Days (561 Years)', moonsText: '1 Moon (Dysnomia)', beltText: 'Scattered Disc / Outer Kuiper Belt', badgeText: 'Dwarf Planet',
+                desc: 'One of the largest known dwarf planets with an extreme elliptical orbit stretching far into the outer boundaries of the solar system.'
+            }
+        ];
+        // Orbital period (days) from the mean-longitude rate; used for the length of the trails
+        bodies.forEach(b => { b.period = 360 * 36525 / b.el.L[1]; });
+
+        // Belts: radius / width in AU for each scale
+        const belts = [
+            { kind: 'asteroids', r: 2.7, w: 0.2, trueR: 2.7, trueW: 1.0, color: [177, 166, 145], alpha: 0.7, trueAlpha: 0.42 }, // asteroid belt ~2.2-3.2 AU
+            { kind: 'kuiper', r: 42, w: 0.6, trueR: 40, trueW: 20, color: [160, 170, 190], alpha: 0.56, trueAlpha: 0.34 } // Kuiper belt ~30-50 AU
+        ];
+        // Deterministic distribution keeps the asteroid field stable instead of flickering between frames.
+        let asteroidSeed = 41721;
+        const seededRandom = () => {
+            asteroidSeed = (asteroidSeed * 1664525 + 1013904223) >>> 0;
+            return asteroidSeed / 4294967296;
+        };
+        const beltParticles = Array.from({ length: 1800 }, () => ({
+            angle: seededRandom() * Math.PI * 2,
+            radial: seededRandom(),
+            size: 0.35 + seededRandom() * 1.05,
+            alpha: 0.25 + seededRandom() * 0.7,
+            shade: Math.floor(115 + seededRandom() * 95)
+        }));
+
+        // Approximate heliocentric placements based on recent public tracker distances (Oct 2026).
+        // Their latitude signs reflect their distinct trajectories out of the ecliptic; longitude
+        // is an illustrative direction, not a live Horizons ephemeris.
+        const deepSpaceProbes = [
+            { name: 'Voyager 1', au: 172.6, lon: 255 * Math.PI / 180, lat: 35 * Math.PI / 180, color: '#ffca68', detail: '≈172.6 AU from the Sun; heading north of the ecliptic' },
+            { name: 'Voyager 2', au: 144.4, lon: 290 * Math.PI / 180, lat: -48 * Math.PI / 180, color: '#83d8ff', detail: '≈144.4 AU from the Sun; heading south of the ecliptic' }
+        ];
+
+        // ---------- Kepler / orbit geometry ----------
+        function solveKepler(M, e) {
+            M = ((M + Math.PI) % TWO_PI + TWO_PI) % TWO_PI - Math.PI;
+            let E = e > 0.8 ? Math.PI : M;
+            for (let i = 0; i < 8; i++) {
+                E = E - (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+            }
+            return E;
+        }
+
+        // Orbit "frame" at time t (days since J2000): size/shape plus the rotation from the orbital plane
+        // into heliocentric ecliptic coordinates, and the eccentric anomaly of the body.
+        function orbitFrame(body, t) {
+            const el = body.el;
+            const T = (t + J2000 - (el.epoch || J2000)) / 36525;
+            const g = k => el[k][0] + el[k][1] * T;
+            const a = g('a'), e = g('e'), I = g('I') * DEG, Om = g('O') * DEG;
+            const wbar = g('w'), L = g('L');
+            const w = wbar * DEG - Om;                    // argument of perihelion
+            const Mdeg = (((L - wbar) % 360) + 540) % 360 - 180; // mean anomaly in [-180, 180)
+            const E = solveKepler(Mdeg * DEG, e);
+            const cw = Math.cos(w), sw = Math.sin(w), cO = Math.cos(Om), sO = Math.sin(Om), cI = Math.cos(I), sI = Math.sin(I);
+            return {
+                a, e, b: a * Math.sqrt(1 - e * e), E,
+                Px: cw * cO - sw * sO * cI, Qx: -(sw * cO + cw * sO * cI),
+                Py: cw * sO + sw * cO * cI, Qy: -sw * sO + cw * cO * cI,
+                Pz: sw * sI,               Qz: cw * sI
+            };
+        }
+
+        // Heliocentric ecliptic position (AU) at time t
+        function positionAt(body, t) {
+            const f = orbitFrame(body, t);
+            const xp = f.a * (Math.cos(f.E) - f.e), yp = f.b * Math.sin(f.E);
+            return { x: f.Px * xp + f.Qx * yp, y: f.Py * xp + f.Qy * yp, z: f.Pz * xp + f.Qz * yp };
+        }
+
+        function positionBodies() {
+            bodies.forEach(body => { body.pos = positionAt(body, globalSimulationTime); });
+        }
+
+        function updateSimulation(dtDays) {
+            if (isPaused) return;
+            globalSimulationTime += dtDays;
+            positionBodies();
+        }
+
+        // ---------- View projection (orthographic, with azimuth + tilt) ----------
+        // Screen X = x1, Screen Y = -(y1*cos(tilt)) - z*sin(tilt), where (x1, y1) is the ecliptic plane rotated by azimuth.
+        // tilt = 0 looks straight down from ecliptic north (counter-clockwise orbits, like the real sky).
+        let F = null; // per-frame view parameters
+        let SX = 0, SY = 0; // output of proj()
+
+        function makeFrame() {
+            const W = wrapper.clientWidth, H = wrapper.clientHeight, z = camera.zoom;
+            return {
+                W, H, z, S: auPx() * z,
+                cA: Math.cos(view.az), sA: Math.sin(view.az),
+                cT: Math.cos(view.tilt), sT: Math.sin(view.tilt)
+            };
+        }
+        function frame() { F = makeFrame(); return F; }
+
+        function proj(x, y, zz) {
+            const dx = x - camera.x, dy = y - camera.y, dz = zz - camera.z;
+            const x1 = dx * F.cA + dy * F.sA;
+            const y1 = -dx * F.sA + dy * F.cA;
+            SX = F.W / 2 + F.S * x1;
+            SY = F.H / 2 + F.S * (-y1 * F.cT - dz * F.sT);
+        }
+
+        // Which way is "toward the viewer" (used to draw bodies in front of / behind the Sun)
+        function depthOf(x, y, zz) {
+            const y1 = -x * F.sA + y * F.cA;
+            return -y1 * F.sT + zz * F.cT;
+        }
+
+        // Screen offset (px from the view centre, at scale S px/AU) -> AU offset on the plane through the camera focus
+        function screenToPlane(mx, my, S) {
+            const cTe = Math.max(F.cT, 0.2);
+            const x1 = mx / S, y1 = -my / (S * cTe);
+            return [x1 * F.cA - y1 * F.sA, x1 * F.sA + y1 * F.cA];
+        }
+
+        // ---------- Canvas sizing ----------
+        function resizeTrailCanvas() {
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            trailCanvas.width = Math.round(wrapper.clientWidth * dpr);
+            trailCanvas.height = Math.round(wrapper.clientHeight * dpr);
+            trailCanvas.style.width = `${wrapper.clientWidth}px`;
+            trailCanvas.style.height = `${wrapper.clientHeight}px`;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+        resizeTrailCanvas();
+        window.addEventListener('resize', () => { resizeTrailCanvas(); redraw(); });
+
+        // ---------- Setup ----------
+        function initUniverse() {
+            bodies.forEach(body => {
+                const container = document.createElement('div');
+                container.className = 'body-container';
+                container.id = `container-${body.id}`;
+                universe.appendChild(container);
+                body.container = container;
+
+                const elem = document.createElement('div');
+                elem.className = 'celestial-body';
+                elem.id = body.id;
+                elem.style.backgroundColor = body.color;
+                elem.onclick = (ev) => {
+                    ev.stopPropagation();
+                    selectBody(body.id);
+                    followBody(body.id);
+                };
+                container.appendChild(elem);
+                body.elem = elem;
+
+                if (body.hasRings) {
+                    const ring = document.createElement('div');
+                    ring.className = body.ringType;
+                    container.appendChild(ring);
+                    body.ringEl = ring;
+                }
+
+                body.moonEls = [];
+                if (body.moons) {
+                    body.moons.forEach(m => {
+                        const mCont = document.createElement('div');
+                        mCont.className = 'moon-container';
+                        container.appendChild(mCont);
+
+                        const mElem = document.createElement('div');
+                        mElem.className = 'moon';
+                        mElem.style.backgroundColor = m.color;
+                        mCont.appendChild(mElem);
+                        const label = document.createElement('span');
+                        label.className = 'moon-label';
+                        label.textContent = m.name;
+                        mElem.appendChild(label);
+                        body.moonEls.push({ cont: mCont, el: mElem, label });
+                    });
+                }
+            });
+
+            renderDirectory();
+            updateScaleNote();
+            positionBodies();
+            frame();
+            applyFollow();
+            redraw();
+
+            setTimeout(() => {
+                const loadingScreen = document.getElementById('loading-screen');
+                loadingScreen.style.opacity = '0';
+                setTimeout(() => loadingScreen.remove(), 800);
+            }, 600);
+        }
+
+        function updateScaleNote() {
+            const title = document.getElementById('scaleNoteTitle');
+            const body = document.getElementById('scaleNoteBody');
+            if (scaleBlend >= 0.999) {
+                title.innerText = '✔ True Physical Scale';
+                body.innerHTML =
+                    'Orbits, planets, moons, belts and the Sun all share one scale.<br>' +
+                    '1 AU = ' + Math.round(TRUE_AU_PX).toLocaleString() + ' px (149.6 million km). ' +
+                    'Earth = 4.6 px (12,742 km).<br>' +
+                    'Nothing is enlarged: sizes shrink and grow with the orbits as you zoom. Bodies too small to see are flagged with a circle and label so you can find them; zoom in to see their real size.' +
+                    '<br><br><strong>Positions:</strong> real orbital elements (NASA/JPL), starting from today\'s date, including orbital tilts.';
+            } else {
+                title.innerText = '⚠ Visualization — Not to Scale';
+                body.innerHTML =
+                    'Planet sizes and orbital distances use different scales; orbital distances are compressed for display. ' +
+                    'Actual distances are in the information panel.<br>' +
+                    'Orbital distance: 1 AU = 100 px (149.6 million km).<br>' +
+                    'Planetary diameter: Earth = 4.6 px (12,742 km).' +
+                    '<br><br><strong>Positions:</strong> real orbital elements (NASA/JPL), starting from today\'s date, including orbital tilts.';
+            }
+        }
+
+        function renderDirectory() {
+            const grid = document.getElementById('celestialGrid');
+            grid.innerHTML = '';
+            const query = document.getElementById('searchInput').value.toLowerCase();
+
+            if ('the sun'.includes(query) || 'sun'.includes(query)) {
+                const sunBtn = document.createElement('button');
+                sunBtn.className = 'celestial-btn';
+                sunBtn.innerText = 'The Sun (Star)';
+                sunBtn.onclick = () => { selectBody('sun'); followBody('sun'); };
+                grid.appendChild(sunBtn);
+            }
+
+            bodies.filter(b => b.name.toLowerCase().includes(query)).forEach(body => {
+                const btn = document.createElement('button');
+                btn.className = 'celestial-btn';
+                btn.innerText = `${body.name} (${body.type === 'Dwarf Planet' ? 'Dwarf' : 'Planet'})`;
+                btn.onclick = () => {
+                    selectBody(body.id);
+                    followBody(body.id);
+                };
+                grid.appendChild(btn);
+            });
+        }
+
+        function filterDirectory() { renderDirectory(); }
+
+        function applyFollow() {
+            if (!followedBodyId) return;
+            if (followedBodyId === 'sun') {
+                camera.x = 0; camera.y = 0; camera.z = 0;
+            } else {
+                const target = bodies.find(body => body.id === followedBodyId);
+                if (target && target.pos) {
+                    camera.x = target.pos.x; camera.y = target.pos.y; camera.z = target.pos.z;
+                }
+            }
+        }
+
+        // ---------- Rendering ----------
+        function onScreen(sx, sy, ext) {
+            if (!isFinite(sx) || !isFinite(sy) || Math.abs(sx) > 1e7 || Math.abs(sy) > 1e7) return false;
+            return sx > -ext - 100 && sx < F.W + ext + 100 && sy > -ext - 100 && sy < F.H + ext + 100;
+        }
+
+        function ringWidth(type, planetSz) {
+            // Visual: original ring look (2.5x / 2.2x, with a minimum width).
+            // True: real ring extents (Saturn A-ring edge ~2.35x planet diameter, Neptune Adams ring ~2.56x).
+            if (type === 'saturn-rings') return Math.max(planetSz * lerp(2.5, 2.35), lerp(24, 0));
+            return Math.max(planetSz * lerp(2.2, 2.56), lerp(18, 0));
+        }
+
+        function renderScene() {
+            const z = F.z;
+
+            // Sun
+            const sunSz = sunSize();
+            proj(0, 0, 0);
+            const sunX = SX, sunY = SY;
+            if (onScreen(sunX, sunY, sunSz * z)) {
+                sunEl.style.display = 'block';
+                sunEl.style.width = `${sunSz}px`;
+                sunEl.style.height = `${sunSz}px`;
+                sunEl.style.transform = `translate(${sunX}px, ${sunY}px) scale(${z}) translate(-50%, -50%)`;
+            } else {
+                sunEl.style.display = 'none';
+            }
+
+            bodies.forEach(body => {
+                const p = body.pos;
+                proj(p.x, p.y, p.z);
+                const sx = SX, sy = SY;
+                const sz = bodySize(body);
+
+                let maxMoon = 0;
+                if (body.moons) {
+                    body.moons.forEach(m => { maxMoon = Math.max(maxMoon, moonDist(m)); });
+                }
+                const ext = Math.max(sz * (body.hasRings ? 2.6 : 1), maxMoon * 2) * z;
+
+                if (!onScreen(sx, sy, ext)) {
+                    body.container.style.display = 'none';
+                    return;
+                }
+                body.container.style.display = 'block';
+                body.container.style.transform = `translate(${sx}px, ${sy}px) scale(${z})`;
+                // Bodies on the near side of the Sun are drawn in front of it, far-side ones behind it
+                body.container.style.zIndex = depthOf(p.x, p.y, p.z) > 0 ? 20 : 5;
+
+                body.elem.style.width = `${sz}px`;
+                body.elem.style.height = `${sz}px`;
+                if (selectedBodyId === body.id) body.elem.style.setProperty('--inv', String(1 / z));
+
+                if (body.ringEl) {
+                    const rw = ringWidth(body.ringType, sz);
+                    body.ringEl.style.width = `${rw}px`;
+                    body.ringEl.style.height = `${rw * (body.ringType === 'saturn-rings' ? 0.38 : 0.4)}px`;
+                }
+
+                if (body.moons) {
+                    body.moons.forEach((m, idx) => {
+                        const parts = body.moonEls[idx];
+                        const dist = moonDist(m);
+                        if (dist * z < 5) { parts.cont.style.display = 'none'; return; }
+                        parts.cont.style.display = 'block';
+                        const angle = (globalSimulationTime / m.period) * 2 * Math.PI;
+                        // Moons orbit in the ecliptic plane; apply the same azimuth + tilt as the rest of the view
+                        const mx = Math.cos(angle) * dist, my = Math.sin(angle) * dist;
+                        const x1 = mx * F.cA + my * F.sA, y1 = -mx * F.sA + my * F.cA;
+                        parts.cont.style.transform = `translate(${x1}px, ${-y1 * F.cT}px)`;
+                        const msz = moonSize(m);
+                        parts.el.style.width = `${msz}px`;
+                        parts.el.style.height = `${msz}px`;
+                        parts.label.style.display = (sz * z >= MOON_LABEL_PLANET_PX) ? 'block' : 'none';
+                    });
+                }
+            });
+        }
+
+        // Orbit polyline with adaptive step: dense where it crosses the screen, coarse where it is far away.
+        function drawOrbit(body) {
+            const fr = orbitFrame(body, globalSimulationTime);
+            const maxStep = TWO_PI / 360, minStep = 1e-9;
+            let E = 0, n = 0;
+            ctx.beginPath();
+            while (n++ < 6000) {
+                const xp = fr.a * (Math.cos(E) - fr.e), yp = fr.b * Math.sin(E);
+                proj(fr.Px * xp + fr.Qx * yp, fr.Py * xp + fr.Qy * yp, fr.Pz * xp + fr.Qz * yp);
+                const sx = SX, sy = SY;
+                if (n === 1) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+                if (E >= TWO_PI) break;
+
+                const d = Math.max(Math.max(-sx, 0, sx - F.W), Math.max(-sy, 0, sy - F.H));
+                const speed = Math.hypot(fr.a * Math.sin(E), fr.b * Math.cos(E)) * F.S; // upper bound, screen px per radian
+                let step = Math.max(30, 0.5 * d) / Math.max(speed, 1e-12);
+                step = Math.min(maxStep, Math.max(minStep, step));
+                E = Math.min(E + step, TWO_PI);
+            }
+            ctx.stroke();
+        }
+
+        function drawBelt(bl, cx, cy) {
+            const S = F.S, z = F.z;
+            const r = lerp(bl.r, bl.trueR) * S;
+            const w = Math.max(lerp(bl.w, bl.trueW) * S, 1);
+            if (!isFinite(r) || r > 3e7) return;
+
+            // A ring in the ecliptic plane becomes an ellipse (squashed by cos(tilt)) when the view is tilted
+            const squash = Math.max(F.cT, 0.01);
+            const dMin = Math.hypot(Math.max(-cx, 0, cx - F.W), Math.max(-cy, 0, cy - F.H));
+            const dMax = Math.hypot(Math.max(Math.abs(cx), Math.abs(cx - F.W)), Math.max(Math.abs(cy), Math.abs(cy - F.H)));
+            if (r + w / 2 < dMin || r * squash - w / 2 > dMax) return;
+
+            const [R, G, B] = bl.color;
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.scale(1, squash);
+            // Both the main asteroid belt and the Kuiper belt are rendered as individual
+            // rocky/icy bodies, not as smooth circular outlines. Radial spread follows each
+            // belt's width at the current visual/physical scale blend.
+            const baseAlpha = lerp(bl.alpha, bl.trueAlpha);
+            const innerAU = lerp(bl.r - bl.w / 2, bl.trueR - bl.trueW / 2);
+            const widthAU = lerp(bl.w, bl.trueW);
+            beltParticles.forEach(a => {
+                const pr = (innerAU + a.radial * widthAU) * S;
+                const px = Math.cos(a.angle) * pr;
+                const py = Math.sin(a.angle) * pr;
+                const screenX = cx + px;
+                const screenY = cy + py * squash;
+                if (screenX < -4 || screenX > F.W + 4 || screenY < -4 || screenY > F.H + 4) return;
+                const dot = Math.max(0.45, a.size * Math.min(1.6, Math.sqrt(Math.max(z, 0.01))));
+                const cool = bl.kind === 'kuiper';
+                const rr = cool ? Math.max(90, a.shade - 12) : a.shade;
+                const gg = cool ? Math.max(100, a.shade - 2) : a.shade - 5;
+                const bb = cool ? Math.min(235, a.shade + 18) : a.shade - 15;
+                ctx.fillStyle = `rgba(${rr}, ${gg}, ${bb}, ${baseAlpha * a.alpha})`;
+                ctx.beginPath();
+                ctx.arc(px, py, dot, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.restore();
+            ctx.setLineDash([]);
+        }
+
+        function renderCanvas() {
+            ctx.clearRect(0, 0, F.W, F.H);
+            proj(0, 0, 0);
+            const cx = SX, cy = SY;
+
+            if (showOrbits) {
+                belts.forEach(bl => drawBelt(bl, cx, cy));
+
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+                ctx.setLineDash(scaleBlend < 0.5 ? [4, 4] : []);
+                bodies.forEach(body => drawOrbit(body));
+                ctx.setLineDash([]);
+            }
+
+            if (showTrails) {
+                // Trails are computed from the orbit itself (the recent past of each body),
+                // so they are exact at any zoom and never lag behind the camera.
+                const N = 40;
+                ctx.lineWidth = 1.5;
+                ctx.globalAlpha = 0.45;
+                bodies.forEach(body => {
+                    const dt = (body.period * 0.2) / N;
+                    ctx.beginPath();
+                    for (let k = 0; k <= N; k++) {
+                        const p = positionAt(body, globalSimulationTime - k * dt);
+                        proj(p.x, p.y, p.z);
+                        if (k === 0) ctx.moveTo(SX, SY); else ctx.lineTo(SX, SY);
+                    }
+                    ctx.strokeStyle = body.color;
+                    ctx.stroke();
+                });
+                ctx.globalAlpha = 1;
+            }
+
+            // Locator markers for bodies too small to see at this zoom. The marker is a fixed-size
+            // screen overlay; the body itself stays at its real drawn size underneath it.
+            const markers = [{ sx: cx, sy: cy, d: sunSize() * F.z, color: '#ffcc33', name: 'Sun' }];
+            bodies.forEach(b => {
+                proj(b.pos.x, b.pos.y, b.pos.z);
+                markers.push({ sx: SX, sy: SY, d: bodySize(b) * F.z, color: b.color, name: b.name });
+            });
+            ctx.font = '11px "Segoe UI", sans-serif';
+            ctx.textBaseline = 'middle';
+            markers.forEach(m => {
+                if (m.d >= 3) return; // only flag bodies that have shrunk to (almost) nothing on screen
+                if (!isFinite(m.sx) || m.sx < -40 || m.sx > F.W + 40 || m.sy < -40 || m.sy > F.H + 40) return;
+                ctx.globalAlpha = 0.85;
+                ctx.strokeStyle = m.color;
+                ctx.fillStyle = m.color;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(m.sx, m.sy, 9, 0, 2 * Math.PI);
+                ctx.stroke();
+                ctx.fillText(m.name, m.sx + 14, m.sy);
+            });
+
+            // JWST is physically close to Earth at L2, but its screen marker is deliberately
+            // offset and enlarged so it can be seen at solar-system zoom levels.
+            const earth = bodies.find(b => b.id === 'earth');
+            if (earth && earth.pos) {
+                proj(earth.pos.x, earth.pos.y, earth.pos.z);
+                const ex = SX, ey = SY;
+                const sunwardX = ex - cx, sunwardY = ey - cy;
+                const mag = Math.max(1, Math.hypot(sunwardX, sunwardY));
+                const jx = ex + (sunwardX / mag) * 13;
+                const jy = ey + (sunwardY / mag) * 13;
+                if (jx > -30 && jx < F.W + 30 && jy > -30 && jy < F.H + 30) {
+                    ctx.globalAlpha = 0.95;
+                    ctx.setLineDash([2, 2]);
+                    ctx.strokeStyle = '#9ee7ff';
+                    ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(jx, jy); ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.fillStyle = '#9ee7ff';
+                    ctx.beginPath(); ctx.arc(jx, jy, 3.5, 0, 2 * Math.PI); ctx.fill();
+                    if (F.z > 2.5) ctx.fillText('JWST (L2)', jx + 7, jy - 7);
+                }
+            }
+
+            // Voyager markers are positioned beyond the Kuiper belt. Their distances and
+            // out-of-ecliptic directions are approximate; their labels include the distances.
+            deepSpaceProbes.forEach(probe => {
+                const cosLat = Math.cos(probe.lat);
+                const x = probe.au * cosLat * Math.cos(probe.lon);
+                const y = probe.au * cosLat * Math.sin(probe.lon);
+                const zz = probe.au * Math.sin(probe.lat);
+                proj(x, y, zz);
+                const px = SX, py = SY;
+                if (!isFinite(px) || px < -35 || px > F.W + 35 || py < -35 || py > F.H + 35) return;
+                ctx.globalAlpha = 0.95;
+                ctx.strokeStyle = probe.color;
+                ctx.fillStyle = probe.color;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath(); ctx.arc(px, py, 4.2, 0, 2 * Math.PI); ctx.fill();
+                ctx.beginPath(); ctx.arc(px, py, 8, 0, 2 * Math.PI); ctx.stroke();
+                ctx.font = '11px "Segoe UI", sans-serif';
+                ctx.fillText(`${probe.name} · ${probe.au.toFixed(1)} AU`, px + 11, py - 3);
+            });
+            ctx.globalAlpha = 1;
+        }
+
+        // Small readouts: simulated date and the selected body's current distance from the Sun
+        let lastDateText = '', lastNowText = '';
+        function updateReadouts() {
+            const dateText = simDaysToDate(globalSimulationTime).toISOString().slice(0, 10);
+            if (dateText !== lastDateText) {
+                document.getElementById('dateLabel').innerText = dateText;
+                lastDateText = dateText;
+            }
+            let nowText = '—';
+            const body = bodies.find(b => b.id === selectedBodyId);
+            if (body && body.pos) {
+                const au = Math.hypot(body.pos.x, body.pos.y, body.pos.z);
+                nowText = `${au.toFixed(2)} AU (${(au * 149.5978707).toFixed(0)} million km) from the Sun`;
+            }
+            if (nowText !== lastNowText) {
+                document.getElementById('infoNow').innerText = nowText;
+                lastNowText = nowText;
+            }
+        }
+
+        function redraw() {
+            frame();
+            renderScene();
+            renderCanvas();
+        }
+
+        function animationLoop(timestamp) {
+            const dtReal = Math.min((timestamp - lastTime) / 1000, 0.05);
+            lastTime = timestamp;
+
+            if (document.hidden) {
+                requestAnimationFrame(animationLoop);
+                return;
+            }
+
+            if (!isPaused) updateSimulation(dtReal * DAYS_PER_SECOND);
+
+            // Ease the view toward the requested tilt
+            if (Math.abs(view.tiltTarget - view.tilt) > 1e-4) view.tilt += (view.tiltTarget - view.tilt) * 0.15;
+            else view.tilt = view.tiltTarget;
+
+            applyFollow();
+            redraw();
+            updateReadouts();
+
+            requestAnimationFrame(animationLoop);
+        }
+
+        // ---------- Interaction ----------
+        wrapper.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        wrapper.addEventListener('mousedown', (e) => {
+            if (e.target.closest('#sidebar') || e.target.closest('#controls')) return;
+            isDragging = true;
+            dragMoved = 0;
+            startDragX = e.clientX;
+            startDragY = e.clientY;
+            dragMode = (e.button === 2 || e.shiftKey) ? 'rotate' : 'pan';
+            if (dragMode === 'pan') {
+                followedBodyId = null;
+                updateFollowButton();
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const ddx = e.clientX - startDragX, ddy = e.clientY - startDragY;
+            dragMoved += Math.abs(ddx) + Math.abs(ddy);
+            startDragX = e.clientX;
+            startDragY = e.clientY;
+
+            frame();
+            if (dragMode === 'rotate') {
+                view.az += ddx * 0.006;
+                view.tilt = Math.min(Math.max(view.tilt + ddy * 0.006, 0), 1.5);
+                view.tiltTarget = view.tilt;
+                updateViewButton();
+            } else {
+                const [dx, dy] = screenToPlane(ddx, ddy, F.S);
+                camera.x -= dx;
+                camera.y -= dy;
+            }
+            redraw();
+        });
+
+        window.addEventListener('mouseup', () => { isDragging = false; });
+
+        // Tiny bodies are hard to click directly, so a click on empty space selects the nearest body/marker
+        wrapper.addEventListener('click', (e) => {
+            if (dragMoved > 5) return;
+            if (e.target.closest('#sidebar') || e.target.closest('#controls')) return;
+            const rect = wrapper.getBoundingClientRect();
+            const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+            frame();
+            const z = F.z;
+            const cand = [];
+            proj(0, 0, 0);
+            cand.push({ id: 'sun', sx: SX, sy: SY, r: sunSize() * z / 2 });
+            bodies.forEach(b => {
+                proj(b.pos.x, b.pos.y, b.pos.z);
+                cand.push({ id: b.id, sx: SX, sy: SY, r: bodySize(b) * z / 2 });
+            });
+            let best = null, bestD = 18;
+            cand.forEach(c => {
+                const d = Math.max(0, Math.hypot(c.sx - mx, c.sy - my) - c.r);
+                if (d < bestD) { bestD = d; best = c.id; }
+            });
+            if (best) { selectBody(best); followBody(best); }
+        });
+
+
+        // Touch support: one finger pans; two fingers pinch-zoom.
+        let touchStart = null;
+        let pinchStartDistance = 0;
+        let pinchStartZoom = 1;
+        wrapper.addEventListener('touchstart', (e) => {
+            if (e.target.closest('#sidebar') || e.target.closest('#controls')) return;
+            if (e.touches.length === 1) {
+                const t = e.touches[0];
+                touchStart = { x: t.clientX, y: t.clientY, lastX: t.clientX, lastY: t.clientY, moved: 0 };
+                followedBodyId = null;
+                updateFollowButton();
+            } else if (e.touches.length === 2) {
+                touchStart = null;
+                const a = e.touches[0], b = e.touches[1];
+                pinchStartDistance = Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+                pinchStartZoom = camera.zoom;
+            }
+        }, { passive: true });
+        wrapper.addEventListener('touchmove', (e) => {
+            if (e.target.closest('#sidebar') || e.target.closest('#controls')) return;
+            if (e.touches.length === 1 && touchStart) {
+                const t = e.touches[0];
+                const dx = t.clientX-touchStart.lastX, dy = t.clientY-touchStart.lastY;
+                touchStart.moved += Math.abs(dx)+Math.abs(dy);
+                touchStart.lastX=t.clientX; touchStart.lastY=t.clientY;
+                frame();
+                const [wx, wy] = screenToPlane(dx, dy, F.S);
+                camera.x -= wx; camera.y -= wy;
+                redraw();
+                e.preventDefault();
+            } else if (e.touches.length === 2) {
+                const a=e.touches[0], b=e.touches[1];
+                const dist=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+                if (pinchStartDistance > 0) {
+                    camera.zoom=clampZoom(pinchStartZoom*dist/pinchStartDistance);
+                    redraw();
+                }
+                e.preventDefault();
+            }
+        }, { passive: false });
+        wrapper.addEventListener('touchend', (e) => {
+            if (touchStart && touchStart.moved < 8 && e.changedTouches.length) {
+                const t=e.changedTouches[0], rect=wrapper.getBoundingClientRect();
+                const mx=t.clientX-rect.left, my=t.clientY-rect.top;
+                frame();
+                const cand=[];
+                proj(0,0,0); cand.push({id:'sun',sx:SX,sy:SY,r:Math.max(12,sunSize()*F.z/2)});
+                bodies.forEach(b=>{proj(b.pos.x,b.pos.y,b.pos.z);cand.push({id:b.id,sx:SX,sy:SY,r:Math.max(12,bodySize(b)*F.z/2)});});
+                let best=null,bestD=28;
+                cand.forEach(c=>{const d=Math.max(0,Math.hypot(c.sx-mx,c.sy-my)-c.r);if(d<bestD){bestD=d;best=c.id;}});
+                if(best){selectBody(best);followBody(best);}
+            }
+            if (e.touches.length === 0) { touchStart=null; pinchStartDistance=0; }
+            else if (e.touches.length === 1) {
+                const t=e.touches[0]; touchStart={x:t.clientX,y:t.clientY,lastX:t.clientX,lastY:t.clientY,moved:10};
+                pinchStartDistance=0;
+            }
+        }, { passive: true });
+
+        wrapper.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            frame();
+            const zoomFactor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+            const newZoom = clampZoom(camera.zoom * zoomFactor);
+
+            const rect = wrapper.getBoundingClientRect();
+            const mx = e.clientX - rect.left - rect.width / 2;
+            const my = e.clientY - rect.top - rect.height / 2;
+
+            const oldS = auPx() * camera.zoom;
+            const newS = auPx() * newZoom;
+            const o1 = screenToPlane(mx, my, oldS);
+            const o2 = screenToPlane(mx, my, newS);
+
+            camera.zoom = newZoom;
+            camera.x += o1[0] - o2[0];
+            camera.y += o1[1] - o2[1];
+
+            redraw();
+        }, { passive: false });
+
+        document.getElementById('pauseBtn').onclick = () => {
+            isPaused = !isPaused;
+            document.getElementById('pauseBtn').innerText = isPaused ? 'Resume' : 'Pause';
+        };
+
+        document.getElementById('todayBtn').onclick = () => {
+            globalSimulationTime = dateToSimDays(new Date());
+            positionBodies();
+            applyFollow();
+            redraw();
+            updateReadouts();
+        };
+
+        document.getElementById('centerBtn').onclick = () => {
+            followedBodyId = 'sun';
+            camera.x = 0; camera.y = 0; camera.z = 0;
+            redraw();
+            updateFollowButton();
+        };
+
+        document.getElementById('followBtn').onclick = () => {
+            if (followedBodyId) {
+                followedBodyId = null;
+            } else if (selectedBodyId) {
+                followedBodyId = selectedBodyId;
+            } else {
+                followedBodyId = 'sun';
+            }
+            updateFollowButton();
+        };
+
+        document.getElementById('orbitToggleBtn').onclick = () => {
+            showOrbits = !showOrbits;
+            const btn = document.getElementById('orbitToggleBtn');
+            btn.innerText = `Orbits: ${showOrbits ? 'On' : 'Off'}`;
+            btn.style.borderColor = showOrbits ? '#4da6ff' : 'rgba(255,255,255,0.2)';
+            redraw();
+        };
+
+        // ---------- Scale switch: Visual Scale <-> True Physical ----------
+        const scaleToggleBtn = document.getElementById('scaleToggleBtn');
+
+        function setScaleBlend(t) {
+            frame();
+            const oldPx = auPx();
+            scaleBlend = t >= 0.5 ? 1 : 0;
+            // Keep the orbits where they are on screen while the sizes change
+            camera.zoom = clampZoom(camera.zoom * oldPx / auPx());
+            scaleToggleBtn.innerText = scaleBlend === 1 ? 'Size: True Physical' : 'Size: Visual Scale';
+            updateScaleNote();
+            redraw();
+        }
+
+        scaleToggleBtn.onclick = () => setScaleBlend(scaleBlend === 1 ? 0 : 1);
+
+        // ---------- View switch: Top-down <-> Tilted 3D ----------
+        const viewBtn = document.getElementById('viewBtn');
+        function updateViewButton() {
+            viewBtn.innerText = view.tiltTarget > 0.05 ? 'View: Tilted 3D' : 'View: Top-down';
+        }
+        viewBtn.onclick = () => {
+            view.tiltTarget = view.tiltTarget > 0.05 ? 0 : TILTED_VIEW;
+            if (view.tiltTarget === 0) view.az = 0;
+            updateViewButton();
+        };
+
+        function updateFollowButton() {
+            // The pulsing selection ring is shown only while a body is being followed.
+            // Follow: None (e.g. after dragging the map, or pressing Follow to release) stops the blink.
+            document.querySelectorAll('.celestial-body.highlighted')
+                .forEach(elem => elem.classList.remove('highlighted'));
+            if (followedBodyId && followedBodyId !== 'sun') {
+                const followed = bodies.find(x => x.id === followedBodyId);
+                if (followed) followed.elem.classList.add('highlighted');
+            }
+
+            const btn = document.getElementById('followBtn');
+            if (!followedBodyId) {
+                btn.innerText = 'Follow: None';
+            } else if (followedBodyId === 'sun') {
+                btn.innerText = 'Follow: Sun';
+            } else {
+                const b = bodies.find(x => x.id === followedBodyId);
+                btn.innerText = `Follow: ${b ? b.name : 'Target'}`;
+            }
+        }
+
+        function selectBody(id) {
+            document.querySelectorAll('.celestial-body.highlighted')
+                .forEach(elem => elem.classList.remove('highlighted'));
+
+            selectedBodyId = id;
+
+            const title = document.getElementById('infoTitle');
+            const badge = document.getElementById('infoBadge');
+            const desc = document.getElementById('infoDesc');
+            const dist = document.getElementById('infoDist');
+            const size = document.getElementById('infoSize');
+            const period = document.getElementById('infoPeriod');
+            const moons = document.getElementById('infoMoons');
+            const belt = document.getElementById('infoBelt');
+
+            if (id === 'sun') {
+                title.innerText = 'The Sun';
+                badge.innerText = 'Central Star';
+                desc.innerText = 'The G-type main-sequence star at the center of our solar system, holding 99.8% of its mass and powering all planetary orbits.';
+                dist.innerText = '0 km (0.0 AU)';
+                size.innerText = '1,392,700 km (109x Earth)';
+                period.innerText = 'N/A (Solar Rotation: ~27 Days)';
+                moons.innerText = 'N/A (Central Star)';
+                belt.innerText = 'Center of System';
+                return;
+            }
+
+            const body = bodies.find(b => b.id === id);
+            if (body) {
+                title.innerText = body.name;
+                badge.innerText = body.badgeText;
+                const moonNames = (body.moons && body.moons.length)
+                    ? `\n\nMajor named moons shown: ${body.moons.map(m => m.name).join(', ')}.`
+                    : (body.type === 'Planet' ? '\n\nKnown moons: none.' : '');
+                desc.innerText = body.desc + moonNames;
+                dist.innerText = body.distText;
+                size.innerText = body.sizeText;
+                period.innerText = body.periodText;
+                moons.innerText = body.moonsText;
+                belt.innerText = body.beltText;
+            }
+        }
+
+        function followBody(id) {
+            followedBodyId = id;
+            updateFollowButton();
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const tab = document.getElementById('toggleSidebarTab');
+            sidebar.classList.toggle('collapsed');
+            tab.style.display = sidebar.classList.contains('collapsed') ? 'block' : 'none';
+            setTimeout(() => { resizeTrailCanvas(); redraw(); }, 320);
+        }
+
+        const spaceFacts = [
+            "A day on Venus is longer than its year. Venus rotates once in about 243 Earth days but orbits the Sun in about 225 days.",
+            "Jupiter is so massive that it contains more than twice the mass of all the other planets combined.",
+            "The Sun contains about 99.86% of the total mass of our Solar System.",
+            "Mars has the largest volcano in the Solar System: Olympus Mons.",
+            "Saturn's average density is lower than water's, although it could not actually float in a giant bathtub.",
+            "Light from the Sun takes about 8 minutes and 20 seconds to reach Earth.",
+            "Neptune takes about 165 Earth years to complete one orbit around the Sun.",
+            "Uranus rotates on its side, giving it extreme seasonal variations.",
+            "Earth is the only planet currently known to support life.",
+            "Pluto has five known moons, including its large companion Charon.",
+            "Mercury is the closest planet to the Sun, but Venus is hotter because of its dense greenhouse atmosphere.",
+            "The Sun is about 4.6 billion years old.",
+            "A year on Mercury lasts only 88 Earth days.",
+            "Jupiter's Great Red Spot is a giant storm that has persisted for centuries.",
+            "Saturn's rings are made mostly of countless particles of water ice, with some rocky material.",
+            "Earth's atmosphere protects life by absorbing harmful radiation and burning up many small meteoroids.",
+            "Mars has two small moons named Phobos and Deimos.",
+            "Neptune was discovered using mathematical predictions before it was directly observed.",
+            "Uranus has 13 known rings.",
+            "Venus rotates in the opposite direction to most planets in the Solar System.",
+            "The Sun's core reaches temperatures of about 15 million degrees Celsius.",
+            "Jupiter has dozens of confirmed moons, including Ganymede, the largest moon in the Solar System.",
+            "Ganymede is larger than the planet Mercury.",
+            "Saturn's moon Titan has lakes and seas of liquid methane and ethane.",
+            "Jupiter's moon Europa is thought to have a global ocean beneath its icy crust.",
+            "Mars has seasons because its rotational axis is tilted, much like Earth's.",
+            "The tallest known mountain in the Solar System is Olympus Mons on Mars.",
+            "A neutron star can pack more mass than the Sun into a sphere roughly the size of a city.",
+            "Black holes can form when the cores of sufficiently massive stars collapse.",
+            "The Milky Way contains hundreds of billions of stars, according to astronomical estimates.",
+            "The Solar System formed about 4.6 billion years ago from a cloud of gas and dust.",
+            "Earth's Moon is moving away from Earth by about 3.8 centimeters per year.",
+            "The Moon always shows Earth nearly the same face because it is tidally locked.",
+            "A total solar eclipse occurs when the Moon passes between Earth and the Sun.",
+            "Comets often develop glowing comas and tails when they approach the Sun.",
+            "The asteroid belt lies mainly between the orbits of Mars and Jupiter.",
+            "Ceres is the largest object in the asteroid belt and is classified as a dwarf planet.",
+            "Pluto is located in the Kuiper Belt, a region beyond Neptune containing icy bodies.",
+            "Eris is a dwarf planet that orbits the Sun far beyond Neptune.",
+            "The Kuiper Belt contains many icy objects left over from the early Solar System.",
+            "A light-year measures distance, not time. It is how far light travels in one year.",
+            "The nearest star system to the Sun is Alpha Centauri, about 4.3 light-years away.",
+            "The observable universe is about 93 billion light-years across.",
+            "The universe is approximately 13.8 billion years old.",
+            "Some stars are so large that their diameters extend hundreds of times beyond the Sun's.",
+            "A supernova is an extremely powerful stellar explosion.",
+            "The International Space Station orbits Earth roughly every 90 minutes.",
+            "Astronauts aboard the International Space Station experience apparent weightlessness while in orbit.",
+            "Space is not completely empty; it contains gas, dust, radiation, and magnetic fields.",
+            "There are billions of galaxies in the observable universe, according to astronomical estimates."
+        ];
+
+        let currentFactIndex = -1;
+
+        function showNextFact() {
+            let nextIndex;
+            do {
+                nextIndex = Math.floor(Math.random() * spaceFacts.length);
+            } while (spaceFacts.length > 1 && nextIndex === currentFactIndex);
+
+            currentFactIndex = nextIndex;
+            document.getElementById("spaceFact").textContent = spaceFacts[currentFactIndex];
+        }
+
+        document.getElementById("nextFactBtn").onclick = showNextFact;
+        showNextFact();
+
+        window.onload = () => {
+            if (window.matchMedia('(max-width: 700px)').matches) {
+                document.getElementById('sidebar').classList.add('collapsed');
+                document.getElementById('toggleSidebarTab').style.display = 'block';
+            }
+            initUniverse();
+            lastTime = performance.now();
+            requestAnimationFrame(animationLoop);
+        };
+    </script>
+</body>
+</html>
